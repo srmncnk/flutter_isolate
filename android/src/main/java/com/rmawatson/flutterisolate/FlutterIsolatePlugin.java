@@ -37,6 +37,7 @@ import io.flutter.view.FlutterRunArguments;
 class IsolateHolder {
     FlutterEngine engine;
     String isolateId;
+    String engineGroup;
 
     EventChannel startupChannel;
     MethodChannel controlChannel;
@@ -52,7 +53,6 @@ public class FlutterIsolatePlugin implements FlutterPlugin, MethodCallHandler, S
     private Queue<IsolateHolder> queuedIsolates;
     private Map<String, IsolateHolder> activeIsolates;
     private Context context;
-    private FlutterEngineGroup engineGroup;
 
     private static void registerWithCustomRegistrant(io.flutter.embedding.engine.FlutterEngine flutterEngine) {
         if (registrant == null) return;
@@ -97,12 +97,6 @@ public class FlutterIsolatePlugin implements FlutterPlugin, MethodCallHandler, S
 
     @Override
     public void onAttachedToEngine(FlutterPluginBinding binding) {
-        FlutterEngineGroupCache engineGroupCache = FlutterEngineGroupCache.getInstance();
-        engineGroup = engineGroupCache.get("main");
-        if (engineGroup == null) {
-            engineGroup = new FlutterEngineGroup(binding.getApplicationContext());
-            engineGroupCache.put("main", engineGroup);
-        }
         setupChannel(binding.getBinaryMessenger(), binding.getApplicationContext());
     }
 
@@ -125,12 +119,30 @@ public class FlutterIsolatePlugin implements FlutterPlugin, MethodCallHandler, S
         FlutterInjector.instance().flutterLoader().ensureInitializationComplete(context, null);
 
         FlutterCallbackInformation cbInfo = FlutterCallbackInformation.lookupCallbackInformation(isolate.entryPoint);
+        FlutterRunArguments runArgs = null;
 
-        isolate.engine = engineGroup.createAndRunEngine(context, new DartExecutor.DartEntrypoint(
-            FlutterInjector.instance().flutterLoader().findAppBundlePath(),
-            cbInfo.callbackLibraryPath,
-            cbInfo.callbackName
-        ));
+        if (isolate.engineGroup != null) {
+            android.util.Log.i("FlutterIsolate", "Running in FlutterEngineGroup " + isolate.engineGroup);
+            FlutterEngineGroupCache engineGroupCache = FlutterEngineGroupCache.getInstance();
+            FlutterEngineGroup engineGroup = engineGroupCache.get(isolate.engineGroup);
+            if (engineGroup == null) {
+                engineGroup = new FlutterEngineGroup(context);
+                engineGroupCache.put(isolate.engineGroup, engineGroup);
+            }
+            isolate.engine = engineGroup.createAndRunEngine(context, new DartExecutor.DartEntrypoint(
+                FlutterInjector.instance().flutterLoader().findAppBundlePath(),
+                cbInfo.callbackLibraryPath,
+                cbInfo.callbackName
+            ));
+        } else {
+            android.util.Log.i("FlutterIsolate", "Running in own FlutterEngine");
+            isolate.engine = new FlutterEngine(context);
+            runArgs = new FlutterRunArguments();
+
+            runArgs.bundlePath = FlutterInjector.instance().flutterLoader().findAppBundlePath();
+            runArgs.libraryPath = cbInfo.callbackLibraryPath;
+            runArgs.entrypoint = cbInfo.callbackName;
+        }
 
         isolate.controlChannel = new MethodChannel(isolate.engine.getDartExecutor().getBinaryMessenger(), NAMESPACE + "/control");
         isolate.startupChannel = new EventChannel(isolate.engine.getDartExecutor().getBinaryMessenger(), NAMESPACE + "/event");
@@ -140,6 +152,11 @@ public class FlutterIsolatePlugin implements FlutterPlugin, MethodCallHandler, S
 
         if (registrant != null) {
             registerWithCustomRegistrant(isolate.engine);
+        }
+
+        if (runArgs != null) {
+            DartExecutor.DartCallback dartCallback = new DartExecutor.DartCallback(context.getAssets(), runArgs.bundlePath, cbInfo);
+            isolate.engine.getDartExecutor().executeDartCallback(dartCallback);
         }
     }
 
@@ -179,6 +196,7 @@ public class FlutterIsolatePlugin implements FlutterPlugin, MethodCallHandler, S
                 isolate.entryPoint = Long.valueOf((Integer) entryPoint);
             }
             isolate.isolateId = call.argument("isolate_id");
+            isolate.engineGroup = call.argument("engine_group");
             isolate.result = result;
 
             queuedIsolates.add(isolate);

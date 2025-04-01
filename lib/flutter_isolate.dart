@@ -23,7 +23,7 @@ class FlutterIsolate {
   /// plugins. T can be any type that can be normally be passed through to
   /// regular isolate's entry point.
   static Future<FlutterIsolate> spawn<T>(
-      void entryPoint(T message), T message) async {
+      void entryPoint(T message), T message, {String? engineGroup}) async {
     final userEntryPointId =
         PluginUtilities.getCallbackHandle(entryPoint)!.toRawHandle();
     final isolateId = const Uuid().v4();
@@ -49,7 +49,8 @@ class FlutterIsolate {
       "entry_point":
           PluginUtilities.getCallbackHandle(_flutterIsolateEntryPoint)!
               .toRawHandle(),
-      "isolate_id": isolateId
+      "isolate_id": isolateId,
+      "engine_group": engineGroup
     });
     return isolateResult.future;
   }
